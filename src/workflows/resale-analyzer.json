@@ -1,0 +1,210 @@
+{
+  "name": "Resale Arbitrage Analyzer",
+  "nodes": [
+    {
+      "id": "f1a2b3c4-d5e6-7890-abcd-111111111111",
+      "name": "Photo Upload Form",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.1,
+      "position": [240, 300],
+      "webhookId": "resale-analyzer",
+      "parameters": {
+        "formTitle": "Resale Item Analyzer",
+        "formDescription": "Upload a photo of an item to get instant eBay pricing and profit analysis",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Item Photo",
+              "fieldType": "file",
+              "requiredField": true,
+              "acceptFileTypes": "image/*"
+            },
+            {
+              "fieldLabel": "Purchase Price",
+              "fieldType": "number",
+              "requiredField": true,
+              "placeholder": "0.00"
+            },
+            {
+              "fieldLabel": "Source",
+              "fieldType": "dropdown",
+              "requiredField": false,
+              "fieldOptions": {
+                "values": [
+                  { "option": "Amazon Bins" },
+                  { "option": "Facebook Marketplace" },
+                  { "option": "Goodwill" },
+                  { "option": "Other" }
+                ]
+              }
+            }
+          ]
+        },
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "f1a2b3c4-d5e6-7890-abcd-222222222222",
+      "name": "Prepare Image",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst binaryKeys = Object.keys(item.binary || {});\n\nif (!binaryKeys.length) {\n  throw new Error('No image file found in the form submission');\n}\n\nconst file = item.binary[binaryKeys[0]];\nconst purchasePrice = parseFloat(\n  item.json['Purchase Price'] ||\n  item.json['purchase_price'] ||\n  item.json.purchasePrice ||\n  0\n);\nconst source = item.json['Source'] || item.json.source || 'Unknown';\n\nconst geminiBody = {\n  contents: [{\n    parts: [\n      {\n        inline_data: {\n          mime_type: file.mimeType || 'image/jpeg',\n          data: file.data\n        }\n      },\n      {\n        text: 'Analyze this item and respond ONLY with a valid JSON object — no markdown, no code fences, no extra text. Include these exact keys: itemName (string), brand (string), model (string or null), category (one of: Electronics|Clothing|Toys|Books|Tools|Home|Sports|Other), condition (one of: New|Like New|Very Good|Good|Acceptable|Unknown), estimatedRetailPrice (number in USD, 0 if unknown), searchKeywords (string of 3–5 words that work best as an eBay search query), confidence (one of: high|medium|low).'\n      }\n    ]\n  }]\n};\n\nreturn [{\n  json: {\n    geminiBody,\n    purchasePrice,\n    source\n  }\n}];"
+      }
+    },
+    {
+      "id": "f1a2b3c4-d5e6-7890-abcd-333333333333",
+      "name": "Gemini Vision",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "='https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + $env.GEMINI_API_KEY",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json.geminiBody) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "f1a2b3c4-d5e6-7890-abcd-444444444444",
+      "name": "Parse Item",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300],
+      "parameters": {
+        "jsCode": "const geminiResponse = $input.first().json;\nconst prev = $('Prepare Image').first().json;\n\nconst rawText = geminiResponse?.candidates?.[0]?.content?.parts?.[0]?.text || '{}';\n\nlet itemInfo;\ntry {\n  const cleaned = rawText\n    .replace(/```json\\s*/gi, '')\n    .replace(/```\\s*/g, '')\n    .trim();\n  itemInfo = JSON.parse(cleaned);\n} catch (_) {\n  itemInfo = {\n    itemName: 'Unknown Item',\n    brand: 'Unknown',\n    model: null,\n    category: 'Other',\n    condition: 'Unknown',\n    estimatedRetailPrice: 0,\n    searchKeywords: 'used item',\n    confidence: 'low'\n  };\n}\n\nconst searchQuery = (itemInfo.searchKeywords || `${itemInfo.brand} ${itemInfo.model || itemInfo.itemName}`)\n  .replace(/[^a-zA-Z0-9 ]/g, ' ')\n  .replace(/\\s+/g, ' ')\n  .trim()\n  .substring(0, 100);\n\nconst encodedKeywords = encodeURIComponent(searchQuery);\nconst appId = $env.EBAY_APP_ID;\nconst base = 'https://svcs.ebay.com/services/search/FindingService/v1';\nconst common = `SERVICE-VERSION=1.0.0&SECURITY-APPNAME=${appId}&RESPONSE-DATA-FORMAT=JSON&paginationInput.entriesPerPage=50`;\n\nconst soldUrl = `${base}?OPERATION-NAME=findCompletedItems&${common}&keywords=${encodedKeywords}&itemFilter(0).name=SoldItemsOnly&itemFilter(0).value=true&sortOrder=EndTimeSoonest`;\nconst activeUrl = `${base}?OPERATION-NAME=findItemsByKeywords&${common}&keywords=${encodedKeywords}&sortOrder=PricePlusShippingLowest`;\n\nreturn [{\n  json: {\n    itemInfo,\n    searchQuery,\n    purchasePrice: prev.purchasePrice,\n    source: prev.source,\n    soldUrl,\n    activeUrl\n  }\n}];"
+      }
+    },
+    {
+      "id": "f1a2b3c4-d5e6-7890-abcd-555555555555",
+      "name": "eBay Sold",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 300],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.soldUrl }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "f1a2b3c4-d5e6-7890-abcd-666666666666",
+      "name": "eBay Active",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 300],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Parse Item').first().json.activeUrl }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "f1a2b3c4-d5e6-7890-abcd-777777777777",
+      "name": "Analyze & Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300],
+      "parameters": {
+        "jsCode": "const activeResults = $input.first().json;\nconst soldResults = $('eBay Sold').first().json;\nconst itemData = $('Parse Item').first().json;\n\nconst { purchasePrice, source, itemInfo, searchQuery } = itemData;\n\n// Extract sold prices from eBay findCompletedItems response\nconst soldItems = soldResults?.findCompletedItemsResponse?.[0]?.searchResult?.[0]?.item || [];\nconst soldPrices = soldItems\n  .map(i => parseFloat(i?.sellingStatus?.[0]?.currentPrice?.[0]?.__value__ || 0))\n  .filter(p => p > 0);\n\n// Extract active listing prices from eBay findItemsByKeywords response\nconst activeItems = activeResults?.findItemsByKeywordsResponse?.[0]?.searchResult?.[0]?.item || [];\nconst activePrices = activeItems\n  .map(i => parseFloat(i?.sellingStatus?.[0]?.currentPrice?.[0]?.__value__ || 0))\n  .filter(p => p > 0);\n\nconst avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;\n\nconst avgSoldPrice = avg(soldPrices);\nconst avgActivePrice = avg(activePrices);\nconst lowestActive = activePrices.length ? Math.min(...activePrices) : 0;\n\n// eBay fee estimate: ~13.25% final value fee\nconst EBAY_FEE = 0.1325;\nconst SHIPPING_EST = 8.00;\nconst ebayFees = avgSoldPrice * EBAY_FEE;\nconst netProfit = avgSoldPrice - purchasePrice - ebayFees - SHIPPING_EST;\nconst profitMargin = purchasePrice > 0 ? (netProfit / purchasePrice) * 100 : 0;\n\nlet recommendation, badgeColor;\nif (soldPrices.length < 3) {\n  recommendation = 'LOW DATA';\n  badgeColor = '#6c757d';\n} else if (profitMargin > 50) {\n  recommendation = 'BUY';\n  badgeColor = '#28a745';\n} else if (profitMargin >= 20) {\n  recommendation = 'MAYBE';\n  badgeColor = '#ffc107';\n} else {\n  recommendation = 'PASS';\n  badgeColor = '#dc3545';\n}\n\nreturn [{\n  json: {\n    itemInfo,\n    purchasePrice,\n    source,\n    searchQuery,\n    soldStats: {\n      count: soldPrices.length,\n      avg: avgSoldPrice.toFixed(2),\n      min: soldPrices.length ? Math.min(...soldPrices).toFixed(2) : '0.00',\n      max: soldPrices.length ? Math.max(...soldPrices).toFixed(2) : '0.00'\n    },\n    activeStats: {\n      count: activePrices.length,\n      avg: avgActivePrice.toFixed(2),\n      lowest: lowestActive.toFixed(2)\n    },\n    profitCalc: {\n      avgSoldPrice: avgSoldPrice.toFixed(2),\n      ebayFees: ebayFees.toFixed(2),\n      shippingEst: SHIPPING_EST.toFixed(2),\n      netProfit: netProfit.toFixed(2),\n      profitMargin: profitMargin.toFixed(1)\n    },\n    recommendation,\n    badgeColor\n  }\n}];"
+      }
+    },
+    {
+      "id": "f1a2b3c4-d5e6-7890-abcd-888888888888",
+      "name": "Build HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 300],
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst { itemInfo, purchasePrice, source, searchQuery, soldStats, activeStats, profitCalc, recommendation, badgeColor } = d;\n\nconst netProfitNum = parseFloat(profitCalc.netProfit);\nconst profitColor = netProfitNum >= 0 ? '#28a745' : '#dc3545';\nconst profitSign = netProfitNum >= 0 ? '+' : '';\nconst retailLine = itemInfo.estimatedRetailPrice > 0\n  ? `<div class=\"detail\">Est. Retail: <strong>$${parseFloat(itemInfo.estimatedRetailPrice).toFixed(2)}</strong></div>`\n  : '';\nconst lowDataNote = recommendation === 'LOW DATA'\n  ? `<div class=\"low-data\">Only ${soldStats.count} sold listing(s) found. Verify manually before buying.</div>`\n  : '';\n\nconst html = `<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n<title>Resale Analysis</title>\n<style>\n* { box-sizing: border-box; margin: 0; padding: 0; }\nbody { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f0f2f5; min-height: 100vh; padding: 16px; }\n.card { background: #fff; border-radius: 14px; padding: 20px; margin-bottom: 14px; box-shadow: 0 2px 10px rgba(0,0,0,0.07); }\n.verdict { text-align: center; padding: 28px 20px; }\n.badge { display: inline-block; color: #fff; background: ${badgeColor}; font-size: 32px; font-weight: 800; padding: 10px 32px; border-radius: 10px; letter-spacing: 3px; }\n.low-data { background: #fff3cd; border: 1px solid #ffc107; border-radius: 8px; padding: 10px 14px; font-size: 13px; color: #856404; margin-top: 12px; }\n.section-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: #aaa; margin-bottom: 12px; }\n.item-name { font-size: 19px; font-weight: 700; color: #111; margin-bottom: 4px; line-height: 1.3; }\n.item-sub { font-size: 14px; color: #666; margin-bottom: 10px; }\n.tags { margin-bottom: 10px; }\n.tag { display: inline-block; background: #f0f2f5; color: #555; font-size: 12px; padding: 3px 9px; border-radius: 5px; margin-right: 5px; margin-bottom: 4px; }\n.detail { font-size: 13px; color: #666; margin-top: 6px; }\n.search-hint { font-size: 12px; color: #aaa; margin-top: 8px; }\n.stats { display: flex; gap: 10px; margin-bottom: 16px; }\n.stat { flex: 1; background: #f8f9fa; border-radius: 10px; padding: 12px 8px; text-align: center; }\n.stat-val { font-size: 20px; font-weight: 800; color: #111; }\n.stat-label { font-size: 10px; color: #999; margin-top: 3px; text-transform: uppercase; letter-spacing: 0.5px; }\ntable { width: 100%; border-collapse: collapse; }\ntd { padding: 9px 0; border-bottom: 1px solid #f5f5f5; font-size: 14px; color: #333; }\ntd:last-child { text-align: right; font-weight: 600; }\ntr:last-child td { border-bottom: none; }\n.profit-row { display: flex; justify-content: space-between; align-items: center; padding-top: 14px; margin-top: 14px; border-top: 2px solid #f0f0f0; }\n.profit-label { font-size: 15px; font-weight: 700; }\n.profit-val { font-size: 22px; font-weight: 900; color: ${profitColor}; }\n.roi { text-align: right; font-size: 12px; color: #999; margin-top: 4px; }\n.footer { text-align: center; color: #ccc; font-size: 11px; padding: 8px 0 20px; }\n</style>\n</head>\n<body>\n\n<div class=\"card verdict\">\n  <div class=\"badge\">${recommendation}</div>\n  ${lowDataNote}\n</div>\n\n<div class=\"card\">\n  <div class=\"section-label\">Item Identified</div>\n  <div class=\"item-name\">${itemInfo.itemName || 'Unknown Item'}</div>\n  <div class=\"item-sub\">${[itemInfo.brand, itemInfo.model].filter(Boolean).join(' \\u2014 ')}</div>\n  <div class=\"tags\">\n    <span class=\"tag\">${itemInfo.category || 'Other'}</span>\n    <span class=\"tag\">${itemInfo.condition || 'Unknown'}</span>\n    <span class=\"tag\">Confidence: ${itemInfo.confidence || 'low'}</span>\n    <span class=\"tag\">${source}</span>\n  </div>\n  ${retailLine}\n  <div class=\"search-hint\">eBay search: \\u201c${searchQuery}\\u201d</div>\n</div>\n\n<div class=\"card\">\n  <div class=\"section-label\">eBay Market Data</div>\n  <div class=\"stats\">\n    <div class=\"stat\">\n      <div class=\"stat-val\">$${soldStats.avg}</div>\n      <div class=\"stat-label\">Avg Sold</div>\n    </div>\n    <div class=\"stat\">\n      <div class=\"stat-val\">${soldStats.count}</div>\n      <div class=\"stat-label\">Sold Listings</div>\n    </div>\n    <div class=\"stat\">\n      <div class=\"stat-val\">$${activeStats.lowest}</div>\n      <div class=\"stat-label\">Lowest Active</div>\n    </div>\n    <div class=\"stat\">\n      <div class=\"stat-val\">${activeStats.count}</div>\n      <div class=\"stat-label\">Competitors</div>\n    </div>\n  </div>\n  <table>\n    <tr><td>Sold range</td><td>$${soldStats.min} \\u2013 $${soldStats.max}</td></tr>\n    <tr><td>Avg active listing</td><td>$${activeStats.avg}</td></tr>\n    <tr><td>Your cost (${source})</td><td>$${parseFloat(purchasePrice).toFixed(2)}</td></tr>\n  </table>\n</div>\n\n<div class=\"card\">\n  <div class=\"section-label\">Profit Estimate</div>\n  <table>\n    <tr><td>Avg eBay sold price</td><td>$${profitCalc.avgSoldPrice}</td></tr>\n    <tr><td>eBay fees (~13.25%)</td><td style=\"color:#dc3545\">\\u2212$${profitCalc.ebayFees}</td></tr>\n    <tr><td>Est. shipping</td><td style=\"color:#dc3545\">\\u2212$${profitCalc.shippingEst}</td></tr>\n    <tr><td>Your cost</td><td style=\"color:#dc3545\">\\u2212$${parseFloat(purchasePrice).toFixed(2)}</td></tr>\n  </table>\n  <div class=\"profit-row\">\n    <span class=\"profit-label\">Net Profit</span>\n    <span class=\"profit-val\">${profitSign}$${profitCalc.netProfit}</span>\n  </div>\n  <div class=\"roi\">ROI: ${profitCalc.profitMargin}%</div>\n</div>\n\n<div class=\"footer\">Resale Arbitrage Analyzer &bull; Gemini Vision + eBay API</div>\n</body>\n</html>`;\n\nreturn [{ json: { html } }];"
+      }
+    },
+    {
+      "id": "f1a2b3c4-d5e6-7890-abcd-999999999999",
+      "name": "Return Report",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2000, 300],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Photo Upload Form": {
+      "main": [
+        [{ "node": "Prepare Image", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare Image": {
+      "main": [
+        [{ "node": "Gemini Vision", "type": "main", "index": 0 }]
+      ]
+    },
+    "Gemini Vision": {
+      "main": [
+        [{ "node": "Parse Item", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Item": {
+      "main": [
+        [{ "node": "eBay Sold", "type": "main", "index": 0 }]
+      ]
+    },
+    "eBay Sold": {
+      "main": [
+        [{ "node": "eBay Active", "type": "main", "index": 0 }]
+      ]
+    },
+    "eBay Active": {
+      "main": [
+        [{ "node": "Analyze & Score", "type": "main", "index": 0 }]
+      ]
+    },
+    "Analyze & Score": {
+      "main": [
+        [{ "node": "Build HTML", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build HTML": {
+      "main": [
+        [{ "node": "Return Report", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}
