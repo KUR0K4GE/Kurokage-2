@@ -1,1 +1,11 @@
 .env
+output/
+config/service_account.json
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.DS_Store
