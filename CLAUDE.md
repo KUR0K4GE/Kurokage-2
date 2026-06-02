@@ -6,22 +6,39 @@ This file is the primary reference for AI assistants (Claude Code and similar) w
 
 ## Project State
 
-This is a **greenfield project**. As of the initial setup, the repository contains only a `README.md`. All architecture, tooling, and conventions should be established here before significant code is written.
+**Network Faceless Auto-Post** — Python automation pipeline that reads a 30-day content planogram from Google Sheets, generates AI carousel images via Pollinations.ai (free, no API key), composes them with Pillow, and publishes to Instagram Business via the Meta Graph API. Zero-cost stack using only free/open-source services.
 
 ---
 
-## Repository Layout (target structure)
-
-Once the project is bootstrapped, the directory tree should follow this convention. Update this section when the actual structure diverges.
+## Repository Layout
 
 ```
 Kurokage-2/
-├── src/            # Application source code
-├── tests/          # Test files mirroring src/ structure
-├── docs/           # Design docs and ADRs
-├── .env.example    # Template for required environment variables
-├── CLAUDE.md       # This file
-└── README.md       # User-facing project overview
+├── config/
+│   ├── __init__.py
+│   ├── settings.py           # Env var loading + validation (dataclass)
+│   └── character_prompt.py   # Hacker avatar prompt builder for Pollinations.ai
+├── src/
+│   ├── __init__.py
+│   ├── sheets_manager.py     # Google Sheets read/write via service account
+│   ├── image_generator.py    # Pollinations.ai image download with retry
+│   ├── canvas_builder.py     # Pillow carousel compositor (cover/content/CTA)
+│   ├── meta_publisher.py     # imgbb upload + Meta Graph API carousel publish
+│   └── workflows/            # n8n workflow exports (legacy, unrelated)
+├── assets/
+│   └── fonts/                # Drop Inter-Bold.ttf or Roboto-Bold.ttf here
+├── output/                   # Gitignored; generated images land here
+├── tests/
+│   ├── test_sheets_manager.py
+│   ├── test_image_generator.py
+│   ├── test_canvas_builder.py
+│   └── test_meta_publisher.py
+├── Dockerfile
+├── main.py                   # Orchestrator — entry point
+├── requirements.txt
+├── .env.example
+├── CLAUDE.md
+└── README.md
 ```
 
 ---
@@ -86,9 +103,21 @@ These apply regardless of language chosen for the project. Update the relevant s
 ## Testing
 
 - Tests live in `tests/` and mirror the `src/` directory structure
-- Run the full test suite before marking a task complete
-- If no test framework exists yet, record the intended command here once chosen (e.g., `npm test`, `pytest`, `go test ./...`)
+- Run the full test suite before marking a task complete: `python -m pytest tests/ -v`
+- All external API calls (Google Sheets, Pollinations.ai, imgbb, Meta Graph) are mocked in tests
 - Do not skip tests to make a build pass — fix the underlying issue
+
+## Stack and Services (all free)
+
+| Purpose          | Service / Library         | Cost |
+|------------------|---------------------------|------|
+| Database / CMS   | Google Sheets API         | Free |
+| Image generation | Pollinations.ai (Flux)    | Free |
+| Image hosting    | imgbb.com                 | Free |
+| Image compositing| Pillow (Python)           | Open Source |
+| Social publishing| Meta Graph API v19.0      | Free |
+| Language         | Python 3.11+              | Open Source |
+| Container        | Docker                    | Free |
 
 ---
 
