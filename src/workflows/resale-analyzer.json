@@ -89,6 +89,15 @@
       "parameters": {
         "method": "GET",
         "url": "={{ $json.soldUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-EBAY-API-APP-NAME", "value": "={{ $env.EBAY_APP_ID }}" },
+            { "name": "X-EBAY-API-DEV-NAME", "value": "={{ $env.EBAY_DEV_ID }}" },
+            { "name": "X-EBAY-API-CERT-NAME", "value": "={{ $env.EBAY_CERT_ID }}" },
+            { "name": "X-EBAY-SOA-GLOBAL-ID", "value": "EBAY-US" }
+          ]
+        },
         "options": {
           "response": {
             "response": {
@@ -107,6 +116,15 @@
       "parameters": {
         "method": "GET",
         "url": "={{ $('Parse Item').first().json.activeUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-EBAY-API-APP-NAME", "value": "={{ $env.EBAY_APP_ID }}" },
+            { "name": "X-EBAY-API-DEV-NAME", "value": "={{ $env.EBAY_DEV_ID }}" },
+            { "name": "X-EBAY-API-CERT-NAME", "value": "={{ $env.EBAY_CERT_ID }}" },
+            { "name": "X-EBAY-SOA-GLOBAL-ID", "value": "EBAY-US" }
+          ]
+        },
         "options": {
           "response": {
             "response": {
