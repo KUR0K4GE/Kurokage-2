@@ -62,7 +62,7 @@
       "position": [680, 300],
       "parameters": {
         "method": "POST",
-        "url": "=`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${$env.GEMINI_API_KEY}`",
+        "url": "=`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${$env.GEMINI_API_KEY}`",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
